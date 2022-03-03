@@ -23,6 +23,8 @@ import com.ning.compress.lzf.util.ChunkEncoderFactory;
 import io.netty5.buffer.ByteBuf;
 import io.netty5.buffer.ByteBufAllocator;
 import io.netty5.buffer.Unpooled;
+import io.netty5.buffer.api.Buffer;
+import io.netty5.buffer.api.BufferAllocator;
 
 import java.util.function.Supplier;
 
@@ -177,15 +179,15 @@ public final class LzfCompressor implements Compressor {
     }
 
     @Override
-    public ByteBuf compress(ByteBuf in, ByteBufAllocator allocator) throws CompressionException {
+    public Buffer compress(Buffer in, BufferAllocator allocator) throws CompressionException {
         switch (state) {
             case CLOSED:
                 throw new CompressionException("Compressor closed");
             case FINISHED:
-                return Unpooled.EMPTY_BUFFER;
+                return allocator.allocate(0)
             case PROCESSING:
                 final int length = in.readableBytes();
-                final int idx = in.readerIndex();
+                final int idx = in.readerOffset();
                 final byte[] input;
                 final int inputPtr;
                 if (in.hasArray()) {

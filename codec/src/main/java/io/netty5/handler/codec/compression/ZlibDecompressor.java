@@ -42,7 +42,7 @@ public final class ZlibDecompressor implements Decompressor {
     private final byte[] dictionary;
 
     // GZIP related
-    private final ByteBufChecksum crc;
+    private final BufferChecksum crc;
     private final boolean decompressConcatenated;
 
     /**
@@ -77,7 +77,7 @@ public final class ZlibDecompressor implements Decompressor {
         switch (wrapper) {
             case GZIP:
                 inflater = new Inflater(true);
-                crc = ByteBufChecksum.wrapChecksum(new CRC32());
+                crc = BufferChecksum.wrapChecksum(new CRC32());
                 break;
             case NONE:
                 inflater = new Inflater(true);

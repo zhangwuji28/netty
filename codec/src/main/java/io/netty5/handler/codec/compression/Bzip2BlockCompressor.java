@@ -15,8 +15,7 @@
  */
 package io.netty5.handler.codec.compression;
 
-import io.netty5.buffer.ByteBuf;
-import io.netty5.util.ByteProcessor;
+import io.netty5.buffer.api.Buffer;
 
 import static io.netty5.handler.codec.compression.Bzip2Constants.*;
 
@@ -25,15 +24,14 @@ import static io.netty5.handler.codec.compression.Bzip2Constants.*;
  *
  * Block encoding consists of the following stages:<br>
  * 1. Run-Length Encoding[1] - {@link #write(int)}<br>
- * 2. Burrows Wheeler Transform - {@link #close(ByteBuf)} (through {@link Bzip2DivSufSort})<br>
- * 3. Write block header - {@link #close(ByteBuf)}<br>
- * 4. Move To Front Transform - {@link #close(ByteBuf)} (through {@link Bzip2HuffmanStageEncoder})<br>
- * 5. Run-Length Encoding[2] - {@link #close(ByteBuf)}  (through {@link Bzip2HuffmanStageEncoder})<br>
- * 6. Create and write Huffman tables - {@link #close(ByteBuf)} (through {@link Bzip2HuffmanStageEncoder})<br>
- * 7. Huffman encode and write data - {@link #close(ByteBuf)} (through {@link Bzip2HuffmanStageEncoder})
+ * 2. Burrows Wheeler Transform - {@link #close(Buffer)} (through {@link Bzip2DivSufSort})<br>
+ * 3. Write block header - {@link #close(Buffer)}<br>
+ * 4. Move To Front Transform - {@link #close(Buffer)} (through {@link Bzip2HuffmanStageEncoder})<br>
+ * 5. Run-Length Encoding[2] - {@link #close(Buffer)}  (through {@link Bzip2HuffmanStageEncoder})<br>
+ * 6. Create and write Huffman tables - {@link #close(Buffer)} (through {@link Bzip2HuffmanStageEncoder})<br>
+ * 7. Huffman encode and write data - {@link #close(Buffer)} (through {@link Bzip2HuffmanStageEncoder})
  */
 final class Bzip2BlockCompressor {
-    private final ByteProcessor writeProcessor = this::write;
 
     /**
      * A writer that provides bit-level writes.
@@ -98,7 +96,7 @@ final class Bzip2BlockCompressor {
     /**
      * Write the Huffman symbol to output byte map.
      */
-    private void writeSymbolMap(ByteBuf out) {
+    private void writeSymbolMap(Buffer out) {
         Bzip2BitWriter writer = this.writer;
 
         final boolean[] blockValuesPresent = this.blockValuesPresent;
@@ -206,15 +204,19 @@ final class Bzip2BlockCompressor {
      * @return The actual number of input bytes written. May be less than the number requested, or
      *         zero if the block is already full
      */
-    int write(final ByteBuf buffer, int offset, int length) {
-        int index = buffer.forEachByte(offset, length, writeProcessor);
-        return index == -1 ? length : index - offset;
+    int write(final Buffer buffer, int offset, int length) {
+        // TODO: Improve perf!
+        int written = 0;
+        for (;length > 0; length--, written++) {
+            write(buffer.getByte(offset++));
+        }
+        return written;
     }
 
     /**
      * Compresses and writes out the block.
      */
-    void close(ByteBuf out) {
+    void close(Buffer out) {
         // If an RLE run is in progress, write it out
         if (rleLength > 0) {
             writeRun(rleCurrentValue & 0xff, rleLength);
@@ -281,7 +283,7 @@ final class Bzip2BlockCompressor {
     }
 
     /**
-     * Gets the CRC of the completed block. Only valid after calling {@link #close(ByteBuf)}.
+     * Gets the CRC of the completed block. Only valid after calling {@link #close(Buffer)}.
      * @return The block's CRC
      */
     int crc() {

@@ -20,28 +20,29 @@ import static java.util.Objects.requireNonNull;
 import io.netty5.buffer.ByteBuf;
 import io.netty5.util.ByteProcessor;
 
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.util.zip.Adler32;
 import java.util.zip.CRC32;
 import java.util.zip.Checksum;
 
 /**
- * {@link Checksum} implementation which can directly act on a {@link ByteBuf}.
+ * {@link Checksum} implementation which can directly act on a {@link Buffer}.
  *
- * Implementations may optimize access patterns depending on if the {@link ByteBuf} is backed by a
- * byte array ({@link ByteBuf#hasArray()} is {@code true}) or not.
+ * Implementations may optimize access patterns depending on if the {@link Buffer} is backed by a
+ * byte array or not.
  */
-abstract class ByteBufChecksum implements Checksum {
+abstract class BufferChecksum implements Checksum {
 
     private final ByteProcessor updateProcessor = value -> {
         update(value);
         return true;
     };
 
-    static ByteBufChecksum wrapChecksum(Checksum checksum) {
+    static BufferChecksum wrapChecksum(Checksum checksum) {
         requireNonNull(checksum, "checksum");
-        if (checksum instanceof ByteBufChecksum) {
-            return (ByteBufChecksum) checksum;
+        if (checksum instanceof BufferChecksum) {
+            return (BufferChecksum) checksum;
         }
         if (checksum instanceof Adler32) {
             return new OptimizedByteBufChecksum<Adler32>((Adler32) checksum) {
@@ -65,7 +66,7 @@ abstract class ByteBufChecksum implements Checksum {
     /**
      * @see #update(byte[], int, int)
      */
-    public void update(ByteBuf b, int off, int len) {
+    public void update(Buffer b, int off, int len) {
         if (b.hasArray()) {
             update(b.array(), b.arrayOffset() + off, len);
         } else {
@@ -79,7 +80,7 @@ abstract class ByteBufChecksum implements Checksum {
         }
 
         @Override
-        public void update(ByteBuf b, int off, int len) {
+        public void update(Buffer b, int off, int len) {
             if (b.hasArray()) {
                 update(b.array(), b.arrayOffset() + off, len);
             } else {
@@ -94,7 +95,7 @@ abstract class ByteBufChecksum implements Checksum {
         public abstract void update(ByteBuffer b);
     }
 
-    private static class SlowByteBufChecksum<T extends Checksum> extends ByteBufChecksum {
+    private static class SlowByteBufChecksum<T extends Checksum> extends BufferChecksum {
 
         protected final T checksum;
 

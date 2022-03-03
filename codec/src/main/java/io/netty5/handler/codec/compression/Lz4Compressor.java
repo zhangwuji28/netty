@@ -74,7 +74,7 @@ public final class Lz4Compressor implements Compressor {
     /**
      * Underlying checksum calculator in use.
      */
-    private final ByteBufChecksum checksum;
+    private final BufferChecksum checksum;
 
     /**
      * Compression level of current LZ4 encoder (depends on {@link #blockSize}).
@@ -161,7 +161,7 @@ public final class Lz4Compressor implements Compressor {
     private Lz4Compressor(LZ4Factory factory, boolean highCompressor, int blockSize,
                           Checksum checksum, int maxEncodeSize) {
         compressor = highCompressor ? factory.highCompressor() : factory.fastCompressor();
-        this.checksum = ByteBufChecksum.wrapChecksum(checksum);
+        this.checksum = BufferChecksum.wrapChecksum(checksum);
 
         compressionLevel = compressionLevel(blockSize);
         this.blockSize = blockSize;

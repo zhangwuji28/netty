@@ -48,7 +48,7 @@ public final class FastLzDecompressor implements Decompressor {
     /**
      * Underlying checksum calculator in use.
      */
-    private final ByteBufChecksum checksum;
+    private final BufferChecksum checksum;
 
     /**
      * Length of current received chunk of data.
@@ -77,7 +77,7 @@ public final class FastLzDecompressor implements Decompressor {
     private int currentChecksum;
 
     private FastLzDecompressor(Checksum checksum) {
-        this.checksum = checksum == null ? null : ByteBufChecksum.wrapChecksum(checksum);
+        this.checksum = checksum == null ? null : BufferChecksum.wrapChecksum(checksum);
     }
 
     /**
@@ -177,7 +177,7 @@ public final class FastLzDecompressor implements Decompressor {
                         output = in.retainedSlice(idx, chunkLength);
                     }
 
-                    final ByteBufChecksum checksum = this.checksum;
+                    final BufferChecksum checksum = this.checksum;
                     if (hasChecksum && checksum != null) {
                         checksum.reset();
                         checksum.update(output, output.readerIndex(), output.readableBytes());

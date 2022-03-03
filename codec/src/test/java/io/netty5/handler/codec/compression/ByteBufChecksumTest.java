@@ -55,26 +55,26 @@ public class ByteBufChecksumTest {
             // all variations of xxHash32: slow and naive, optimised, wrapped optimised;
             // the last two should be literally identical, but it's best to guard against
             // an accidental regression in ByteBufChecksum#wrapChecksum(Checksum)
-            testUpdate(xxHash32(DEFAULT_SEED), ByteBufChecksum.wrapChecksum(xxHash32(DEFAULT_SEED)), buf);
+            testUpdate(xxHash32(DEFAULT_SEED), BufferChecksum.wrapChecksum(xxHash32(DEFAULT_SEED)), buf);
             testUpdate(xxHash32(DEFAULT_SEED), new Lz4XXHash32(DEFAULT_SEED), buf);
-            testUpdate(xxHash32(DEFAULT_SEED), ByteBufChecksum.wrapChecksum(new Lz4XXHash32(DEFAULT_SEED)), buf);
+            testUpdate(xxHash32(DEFAULT_SEED), BufferChecksum.wrapChecksum(new Lz4XXHash32(DEFAULT_SEED)), buf);
 
             // CRC32 and Adler32, special-cased to use ReflectiveByteBufChecksum
-            testUpdate(new CRC32(), ByteBufChecksum.wrapChecksum(new CRC32()), buf);
-            testUpdate(new Adler32(), ByteBufChecksum.wrapChecksum(new Adler32()), buf);
+            testUpdate(new CRC32(), BufferChecksum.wrapChecksum(new CRC32()), buf);
+            testUpdate(new Adler32(), BufferChecksum.wrapChecksum(new Adler32()), buf);
         } finally {
             buf.release();
         }
     }
 
-    private static void testUpdate(Checksum checksum, ByteBufChecksum wrapped, ByteBuf buf) {
+    private static void testUpdate(Checksum checksum, BufferChecksum wrapped, ByteBuf buf) {
         testUpdate(checksum, wrapped, buf, 0, BYTE_ARRAY.length);
         testUpdate(checksum, wrapped, buf, 0, BYTE_ARRAY.length - 1);
         testUpdate(checksum, wrapped, buf, 1, BYTE_ARRAY.length - 1);
         testUpdate(checksum, wrapped, buf, 1, BYTE_ARRAY.length - 2);
     }
 
-    private static void testUpdate(Checksum checksum, ByteBufChecksum wrapped, ByteBuf buf, int off, int len) {
+    private static void testUpdate(Checksum checksum, BufferChecksum wrapped, ByteBuf buf, int off, int len) {
         checksum.reset();
         wrapped.reset();
 

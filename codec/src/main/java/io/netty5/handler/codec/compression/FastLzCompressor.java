@@ -18,6 +18,8 @@ package io.netty5.handler.codec.compression;
 import io.netty5.buffer.ByteBuf;
 import io.netty5.buffer.ByteBufAllocator;
 import io.netty5.buffer.Unpooled;
+import io.netty5.buffer.api.Buffer;
+import io.netty5.buffer.api.BufferAllocator;
 
 import java.util.function.Supplier;
 import java.util.zip.Adler32;
@@ -39,7 +41,7 @@ public final class FastLzCompressor implements Compressor {
     /**
      * Underlying checksum calculator in use.
      */
-    private final ByteBufChecksum checksum;
+    private final BufferChecksum checksum;
 
     private enum State {
         PROCESSING,
@@ -62,7 +64,7 @@ public final class FastLzCompressor implements Compressor {
      */
     private FastLzCompressor(int level, Checksum checksum) {
         this.level = level;
-        this.checksum = checksum == null ? null : ByteBufChecksum.wrapChecksum(checksum);
+        this.checksum = checksum == null ? null : BufferChecksum.wrapChecksum(checksum);
     }
 
     /**
@@ -123,12 +125,12 @@ public final class FastLzCompressor implements Compressor {
     }
 
     @Override
-    public ByteBuf compress(ByteBuf in, ByteBufAllocator allocator) throws CompressionException {
+    public Buffer compress(Buffer in, BufferAllocator allocator) throws CompressionException {
         switch (state) {
             case CLOSED:
                 throw new CompressionException("Compressor closed");
             case FINISHED:
-                return Unpooled.EMPTY_BUFFER;
+                return allocator.allocate(0);
             case PROCESSING:
                 return compressData(in, allocator);
             default:
@@ -136,17 +138,18 @@ public final class FastLzCompressor implements Compressor {
         }
     }
 
-    private ByteBuf compressData(ByteBuf in, ByteBufAllocator allocator) {
-        final ByteBufChecksum checksum = this.checksum;
-        ByteBuf out = allocator.buffer();
+    private Buffer compressData(Buffer in, BufferAllocator allocator) {
+        final BufferChecksum checksum = this.checksum;
+        // TODO: is this correct ?
+        Buffer out = allocator.allocate(256);
         for (;;) {
-            if (!in.isReadable()) {
+            if (in.readableBytes() == 0) {
                 return out;
             }
-            final int idx = in.readerIndex();
+            final int idx = in.readerOffset();
             final int length = Math.min(in.readableBytes(), MAX_CHUNK_LENGTH);
 
-            final int outputIdx = out.writerIndex();
+            final int outputIdx = out.writerOffset();
             out.setMedium(outputIdx, MAGIC_NUMBER);
             int outputOffset = outputIdx + CHECKSUM_OFFSET + (checksum != null ? 4 : 0);
 
