@@ -237,25 +237,33 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel<Channel, S
     }
 
     @Override
-    protected int doReadMessages(ReadSink readSink) throws Exception {
-        SocketChannel ch = SocketUtils.accept(javaChannel());
-        try {
-            if (ch != null) {
-                readSink.processRead(0, 0,
-                        new NioSocketChannel(this, childEventLoopGroup().next(), ch, family));
-                return 1;
-            }
-        } catch (Throwable t) {
-            logger.warn("Failed to create a new channel from an accepted socket.", t);
-
+    protected void doReadNow(ReadSink readSink) {
+        NioSocketChannel nioSocketChannel;
+        boolean keepReading;
+        do {
             try {
-                ch.close();
-            } catch (Throwable t2) {
-                logger.warn("Failed to close a socket.", t2);
+                SocketChannel ch = SocketUtils.accept(javaChannel());
+                try {
+                    if (ch != null) {
+                        nioSocketChannel = new NioSocketChannel(this, childEventLoopGroup().next(), ch, family);
+                    } else {
+                        nioSocketChannel = null;
+                    }
+                    keepReading = readSink.consumeReadResult(0, 0, nioSocketChannel);
+                } catch (Throwable t) {
+                    logger.warn("Failed to create a new channel from an accepted socket.", t);
+
+                    try {
+                        ch.close();
+                    } catch (Throwable t2) {
+                        logger.warn("Failed to close a socket.", t2);
+                    }
+                    keepReading = readSink.consumeReadResult(0, 0, null);
+                }
+            } catch (IOException e) {
+                keepReading = readSink.consumeReadResult(0, 0, e);
             }
-        }
-        readSink.processRead(0, 0, null);
-        return 0;
+        } while (keepReading);
     }
 
     // Unnecessary stuff

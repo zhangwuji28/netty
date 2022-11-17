@@ -101,10 +101,13 @@ public class LocalServerChannel extends AbstractServerChannel<LocalChannel, Loca
     }
 
     @Override
-    protected boolean doReadNow(ReadSink readSink) {
-        Object m = inboundBuffer.poll();
-        readSink.processRead(0, 0, m);
-        return false;
+    protected void doReadNow(ReadSink readSink) {
+        for (;;) {
+            Object m = inboundBuffer.poll();
+            if (!readSink.consumeReadResult(0, 0, m)) {
+                break;
+            }
+        }
     }
 
     /**

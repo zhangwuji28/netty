@@ -41,16 +41,4 @@ public abstract class AbstractNioMessageChannel<P extends Channel, L extends Soc
         super(parent, eventLoop, supportingDisconnect, defaultReadHandleFactory, defaultWriteHandleFactory,
                 ch, readInterestOp);
     }
-
-    @Override
-    protected final boolean doReadNow(ReadSink readSink) throws Exception {
-        int localRead = doReadMessages(readSink);
-        return localRead < 0;
-    }
-
-    /**
-     * Read messages into the given array and return the amount which was read.
-     */
-    protected abstract int doReadMessages(ReadSink readSink) throws Exception;
-
 }

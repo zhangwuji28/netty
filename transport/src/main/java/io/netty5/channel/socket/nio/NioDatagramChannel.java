@@ -17,6 +17,7 @@ package io.netty5.channel.socket.nio;
 
 import io.netty5.buffer.Buffer;
 
+import io.netty5.channel.AbstractChannel;
 import io.netty5.channel.ChannelShutdownDirection;
 import io.netty5.channel.FixedReadHandleFactory;
 import io.netty5.channel.MaxMessagesWriteHandleFactory;
@@ -372,40 +373,48 @@ public final class NioDatagramChannel
     }
 
     @Override
-    protected int doReadMessages(ReadSink readSink) throws Exception {
-        Buffer data = readSink.allocateBuffer();
-        if (data == null) {
-            readSink.processRead(0, 0, null);
-            return 0;
-        }
-        int attemptedBytesRead = data.writableBytes();
-        boolean free = true;
-        try {
-            SocketAddress remoteAddress = null;
-            int actualBytesRead = 0;
-            try (var iterator = data.forEachComponent()) {
-                var component = iterator.firstWritable();
-                if (component != null) {
-                    ByteBuffer dst = component.writableBuffer();
-                    int position = dst.position();
-                    remoteAddress =  javaChannel().receive(dst);
-                    actualBytesRead = dst.position() - position;
+    protected void doReadNow(AbstractChannel<Channel, SocketAddress, SocketAddress>.ReadSink readSink) {
+        boolean keepReading;
+        do {
+            Buffer buffer = readSink.allocateBuffer();
+            if (buffer == null) {
+                keepReading = readSink.consumeReadResult(0, 0, null);
+            } else {
+                int attemptedBytesRead = buffer.writableBytes();
+                int actualBytesRead = 0;
+                try {
+                    DatagramPacket packet = doReadPacket(buffer);
+                    if (packet != null) {
+                        actualBytesRead = packet.content().readableBytes();
+                    }  else {
+                        buffer.close();
+                    }
+                    keepReading = readSink.consumeReadResult(attemptedBytesRead, actualBytesRead, packet);
+                } catch (IOException e) {
+                    buffer.close();
+                    keepReading = readSink.consumeReadResult(attemptedBytesRead, 0, e);
                 }
             }
-            if (remoteAddress == null) {
-                readSink.processRead(attemptedBytesRead, 0, null);
-                return -1;
-            }
-            data.skipWritableBytes(actualBytesRead);
-            readSink.processRead(attemptedBytesRead, actualBytesRead,
-                    new DatagramPacket(data, localAddress(), remoteAddress));
-            free = false;
-            return 1;
-        } finally {
-            if (free) {
-                data.close();
+        } while (keepReading);
+    }
+
+    private DatagramPacket doReadPacket(Buffer data) throws IOException {
+        SocketAddress remoteAddress = null;
+        int actualBytesRead = 0;
+        try (var iterator = data.forEachComponent()) {
+            var component = iterator.firstWritable();
+            if (component != null) {
+                ByteBuffer dst = component.writableBuffer();
+                int position = dst.position();
+                remoteAddress =  javaChannel().receive(dst);
+                actualBytesRead = dst.position() - position;
             }
         }
+        if (remoteAddress == null) {
+            return null;
+        }
+        data.skipWritableBytes(actualBytesRead);
+        return new DatagramPacket(data, localAddress(), remoteAddress);
     }
 
     @Override

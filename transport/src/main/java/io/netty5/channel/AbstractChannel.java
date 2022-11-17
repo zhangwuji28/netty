@@ -941,7 +941,7 @@ public abstract class AbstractChannel<P extends Channel, L extends SocketAddress
     }
 
     /**
-     * Try to read a message from the transport and dispatch it via {@link ReadSink#processRead(int, int, Object)}.
+     * Try to read a messages from the transport and dispatch it via {@link ReadSink#processRead(int, int, Object)}.
      * This method is called in a loop until there is nothing more messages to read or the channel was
      * shutdown / closed.
      * <strong>This method should never be called directly by sub-classes, use {@link #readNow()} instead.</strong>
@@ -950,7 +950,7 @@ public abstract class AbstractChannel<P extends Channel, L extends SocketAddress
      *                      to propagate these.
      * @return {@code true} if the channel should be shutdown / closed.
      */
-    protected abstract boolean doReadNow(ReadSink readSink) throws Exception;
+    protected abstract void doReadNow(ReadSink readSink);
 
     /**
      * Returns {@code true} if a read is currently scheduled and pending for later execution.
@@ -1974,6 +1974,7 @@ public abstract class AbstractChannel<P extends Channel, L extends SocketAddress
     protected final class ReadSink {
         final ReadHandleFactory.ReadHandle readHandle;
 
+        private boolean eof;
         private boolean readSomething;
         private boolean continueReading;
 
@@ -1984,20 +1985,50 @@ public abstract class AbstractChannel<P extends Channel, L extends SocketAddress
         /**
          * Process the read message and fire it through the {@link ChannelPipeline}
          *
-         * @param attemptedBytesRead    The number of  bytes the read operation did attempt to read.
-         * @param actualBytesRead       The number of bytes the read operation actually read.
-         * @param message               the read message or {@code null} if none was read.
+         * @param attemptedBytesRead    The number of bytes the read operation did attempt to read.
+         * @param actualBytesRead       The number of bytes the read operation actually read or {@code -1} if EOF
+         *                              was detected.
+         * @param result                the read result or {@code null} if none was read. If an error happens during
+         *                              reading the user should pass in the {@link Throwable} as result.
+         * @return                      {@code true} if more messages should been read and so
+         *                              {@link #consumeReadResult(int, int, Object)} should be called again.
          */
-        public void processRead(int attemptedBytesRead, int actualBytesRead, Object message) {
-            if (message == null) {
+        public boolean consumeReadResult(int attemptedBytesRead, int actualBytesRead, Object result) {
+            if (result == null) {
                 readHandle.lastRead(attemptedBytesRead, actualBytesRead, 0);
+                if (actualBytesRead <= -1) {
+                    eof = true;
+                }
                 continueReading = false;
-            } else {
+            } else if (result instanceof Throwable) {
+                continueReading = false;
+                if (completeFailure((Throwable) result)) {
+                    shutdownReadSide();
+                } else {
+                    closeTransport(newPromise());
+                }
+            }  else {
                 readSomething = true;
                 currentBufferAllocator = null;
                 continueReading = readHandle.lastRead(attemptedBytesRead, actualBytesRead, 1);
-                pipeline().fireChannelRead(message);
+                pipeline().fireChannelRead(result);
             }
+
+            boolean continueReading = isContinueReading();
+            if (!continueReading) {
+                complete();
+
+                if (eof) {
+                    shutdownReadSide();
+                } else {
+                    readIfIsAutoRead();
+                }
+            }
+            return continueReading; // isContinueReading();
+        }
+
+        private boolean isContinueReading() {
+            return continueReading && !eof && !isShutdown(ChannelShutdownDirection.Inbound);
         }
 
         /**
@@ -2024,6 +2055,16 @@ public abstract class AbstractChannel<P extends Channel, L extends SocketAddress
             } finally {
                 continueReading = false;
                 readLoopComplete();
+
+                // Check if there is a readPending which was not processed yet.
+                // This could be for two reasons:
+                // * The user called Channel.read() or ChannelHandlerContext.read() in channelRead(...) method
+                // * The user called Channel.read() or ChannelHandlerContext.read() in channelReadComplete(...) method
+                //
+                // See https://github.com/netty/netty/issues/2254
+                if (!isReadPending() && !isAutoRead()) {
+                    clearScheduledRead();
+                }
             }
         }
 
@@ -2042,6 +2083,16 @@ public abstract class AbstractChannel<P extends Channel, L extends SocketAddress
             } finally {
                 continueReading = false;
                 readLoopComplete();
+
+                // Check if there is a readPending which was not processed yet.
+                // This could be for two reasons:
+                // * The user called Channel.read() or ChannelHandlerContext.read() in channelRead(...) method
+                // * The user called Channel.read() or ChannelHandlerContext.read() in channelReadComplete(...) method
+                //
+                // See https://github.com/netty/netty/issues/2254
+                if (!isReadPending() && !isAutoRead()) {
+                    clearScheduledRead();
+                }
             }
         }
 
@@ -2057,38 +2108,7 @@ public abstract class AbstractChannel<P extends Channel, L extends SocketAddress
 
         void readLoop() {
             continueReading = false;
-            boolean closed;
-            try {
-                do {
-                    try {
-                        closed = doReadNow(this);
-                    } catch (Throwable cause) {
-                        if (completeFailure(cause)) {
-                            shutdownReadSide();
-                        } else {
-                            closeTransport(newPromise());
-                        }
-                        return;
-                    }
-                } while (continueReading && !closed && !isShutdown(ChannelShutdownDirection.Inbound));
-                complete();
-            } finally {
-                // Check if there is a readPending which was not processed yet.
-                // This could be for two reasons:
-                // * The user called Channel.read() or ChannelHandlerContext.read() in channelRead(...) method
-                // * The user called Channel.read() or ChannelHandlerContext.read() in channelReadComplete(...) method
-                //
-                // See https://github.com/netty/netty/issues/2254
-                if (!isReadPending() && !isAutoRead()) {
-                    clearScheduledRead();
-                }
-            }
-
-            if (closed) {
-                shutdownReadSide();
-            } else {
-                readIfIsAutoRead();
-            }
+            doReadNow(this);
         }
     }
 

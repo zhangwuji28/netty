@@ -214,10 +214,13 @@ public class LocalChannel extends AbstractChannel<LocalServerChannel, LocalAddre
     }
 
     @Override
-    protected boolean doReadNow(ReadSink readSink) {
-        Object received = inboundBuffer.poll();
-        readSink.processRead(0, 0, received);
-        return false;
+    protected void doReadNow(ReadSink readSink) {
+        for (;;) {
+            Object received = inboundBuffer.poll();
+            if (!readSink.consumeReadResult(0, 0, received)) {
+                break;
+            }
+        }
     }
 
     private static final class ReaderStackDepth {

@@ -248,8 +248,8 @@ public class AbstractChannelTest {
         protected void doRead(boolean wasReadPendingAlready) { }
 
         @Override
-        protected boolean doReadNow(ReadSink readSink) {
-            return false;
+        protected void doReadNow(ReadSink readSink) {
+            // NOOP
         }
 
         @Override
