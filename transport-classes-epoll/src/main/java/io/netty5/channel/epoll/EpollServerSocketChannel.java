@@ -353,16 +353,27 @@ public final class EpollServerSocketChannel
     }
 
     @Override
-    protected ReadState epollInReady(ReadSink readSink) throws Exception {
-        int acceptedFd = socket.accept(acceptedAddress);
-        if (acceptedFd == -1) {
-            readSink.processRead(0, 0, null);
-            // this means everything was handled for now
-            return ReadState.All;
+    protected boolean epollInReady(ReadSink readSink) {
+        for (;;) {
+            try {
+                int acceptedFd = socket.accept(acceptedAddress);
+                if (acceptedFd == -1) {
+                    if (!readSink.consumeReadResult(0, 0, null)) {
+                        // this means everything was handled for now
+                        return false;
+                    }
+                } else {
+                    if (!readSink.consumeReadResult(
+                            0, 0, newChildChannel(acceptedFd, acceptedAddress, 1, acceptedAddress[0]))) {
+                        return true;
+                    }
+                }
+            } catch (Exception e) {
+                if (!readSink.consumeReadResult(0, 0, e)) {
+                    return false;
+                }
+            }
         }
-        readSink.processRead(0, 0,
-                newChildChannel(acceptedFd, acceptedAddress, 1, acceptedAddress[0]));
-        return ReadState.Partial;
     }
 
     @Override

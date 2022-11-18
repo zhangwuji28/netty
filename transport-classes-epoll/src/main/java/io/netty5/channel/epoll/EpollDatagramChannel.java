@@ -481,140 +481,277 @@ public final class EpollDatagramChannel extends AbstractEpollChannel<UnixChannel
     }
 
     @Override
-    protected ReadState epollInReady(
-            ReadSink readSink) throws Exception {
+    protected boolean epollInReady(
+            ReadSink readSink) {
         return socket.protocolFamily() == SocketProtocolFamily.UNIX ?
                 doReadBufferDomainSocket(readSink) :
                 doReadBuffer(readSink);
     }
 
-    private ReadState doReadBufferDomainSocket(ReadSink readSink) throws Exception {
+    private boolean doReadBufferDomainSocket(ReadSink readSink) {
         Buffer buf = null;
-        try {
-            boolean connected = isConnected();
-
-            buf = readSink.allocateBuffer();
-            if (buf == null) {
-                readSink.processRead(0, 0, null);
-                return ReadState.Partial;
-            }
-            int attemptedBytesRead = buf.writableBytes();
-            assert buf.isDirect();
-
-            final DatagramPacket packet;
-            int actualBytesRead;
-            if (connected) {
-                actualBytesRead = doReadBytes(buf);
-                if (actualBytesRead <= 0) {
-                    // nothing was read, release the buffer.
-                    buf.close();
-                    readSink.processRead(attemptedBytesRead, actualBytesRead, null);
-
-                    return actualBytesRead == 0 ? ReadState.All : ReadState.Closed;
-                }
-
-                buf.skipWritableBytes(actualBytesRead);
-                packet = new DatagramPacket(buf, localAddress(), remoteAddress());
-            } else {
-                final DomainDatagramSocketAddress remoteAddress;
-                try (var iteration = buf.forEachComponent()) {
-                    var c = iteration.firstWritable();
-                    if (c != null) {
-                        remoteAddress = socket.recvFromAddressDomainSocket(
-                                c.writableNativeAddress(), 0, c.writableBytes());
-                    } else {
-                        remoteAddress = null;
+        for (;;) {
+            try {
+                boolean connected = isConnected();
+                buf = readSink.allocateBuffer();
+                if (buf == null) {
+                    if (!readSink.consumeReadResult(0, 0, null)) {
+                        return true;
                     }
-                }
-
-                if (remoteAddress == null) {
-                    readSink.processRead(attemptedBytesRead, 0, null);
-                    buf.close();
-                    return ReadState.All;
-                }
-                DomainSocketAddress localAddress = remoteAddress.localAddress();
-                if (localAddress == null) {
-                    localAddress = (DomainSocketAddress) localAddress();
-                }
-                actualBytesRead = remoteAddress.receivedAmount();
-
-                buf.skipWritableBytes(actualBytesRead);
-                packet = new DatagramPacket(buf, localAddress, remoteAddress);
-            }
-
-            readSink.processRead(attemptedBytesRead, actualBytesRead, packet);
-            buf = null;
-            return ReadState.Partial;
-        } catch (Throwable t) {
-            if (buf != null) {
-                buf.close();
-            }
-            throw t;
-        }
-    }
-
-    private ReadState doReadBuffer(ReadSink readSink) throws Exception {
-        boolean connected = isConnected();
-        int datagramSize = getMaxDatagramPayloadSize();
-        Buffer buf = readSink.allocateBuffer();
-        if (buf == null) {
-            readSink.processRead(0, 0, null);
-            return ReadState.Partial;
-        }
-        // Only try to use recvmmsg if its really supported by the running system.
-        int numDatagram = Native.IS_SUPPORTING_RECVMMSG ?
-                datagramSize == 0 ? 1 : buf.writableBytes() / datagramSize :
-                0;
-        try {
-            if (numDatagram <= 1) {
-                if (!connected || isUdpGro()) {
-                    return recvmsg(readSink, cleanDatagramPacketArray(), buf);
                 } else {
-                    return connectedRead(readSink, buf, datagramSize);
+                    int attemptedBytesRead = buf.writableBytes();
+                    assert buf.isDirect();
+
+                    final DatagramPacket packet;
+                    int actualBytesRead;
+                    if (connected) {
+                        actualBytesRead = doReadBytes(buf);
+                        if (actualBytesRead <= 0) {
+                            // nothing was read, release the buffer.
+                            buf.close();
+                            buf = null;
+                            if (!readSink.consumeReadResult(attemptedBytesRead, actualBytesRead, null)) {
+                                return false;
+                            }
+                        } else {
+                            buf.skipWritableBytes(actualBytesRead);
+                            packet = new DatagramPacket(buf, localAddress(), remoteAddress());
+                            boolean keepReading = readSink.consumeReadResult(
+                                    attemptedBytesRead, actualBytesRead, packet);
+                            buf = null;
+                            if (!keepReading) {
+                                return true;
+                            }
+                        }
+                    } else {
+                        final DomainDatagramSocketAddress remoteAddress;
+                        try (var iteration = buf.forEachComponent()) {
+                            var c = iteration.firstWritable();
+                            if (c != null) {
+                                remoteAddress = socket.recvFromAddressDomainSocket(
+                                        c.writableNativeAddress(), 0, c.writableBytes());
+                            } else {
+                                remoteAddress = null;
+                            }
+                        }
+
+                        if (remoteAddress == null) {
+                            buf.close();
+                            buf = null;
+                            if (!readSink.consumeReadResult(attemptedBytesRead, 0, null)) {
+                                return false;
+                            }
+                        } else {
+                            DomainSocketAddress localAddress = remoteAddress.localAddress();
+                            if (localAddress == null) {
+                                localAddress = (DomainSocketAddress) localAddress();
+                            }
+                            actualBytesRead = remoteAddress.receivedAmount();
+
+                            buf.skipWritableBytes(actualBytesRead);
+                            packet = new DatagramPacket(buf, localAddress, remoteAddress);
+
+                            boolean keepReading = readSink.consumeReadResult(
+                                    attemptedBytesRead, actualBytesRead, packet);
+                            buf = null;
+                            if (!keepReading) {
+                                return true;
+                            }
+                        }
+                    }
                 }
-            } else {
-                // Try to use scattering reads via recvmmsg(...) syscall.
-                return scatteringRead(readSink, cleanDatagramPacketArray(), buf, datagramSize, numDatagram);
+            } catch (Throwable t) {
+                if (buf != null) {
+                    buf.close();
+                }
+                if (!readSink.consumeReadResult(0, 0, t)) {
+                    return false;
+                }
             }
-        } catch (NativeIoException e) {
-            if (connected) {
-                throw translateForConnected(e);
-            }
-            throw e;
         }
     }
 
-    private ReadState connectedRead(ReadSink readSink, Buffer buf, int maxDatagramPacketSize) throws Exception {
-        try {
-            int attemptedBytesRead = maxDatagramPacketSize != 0 ? Math.min(buf.writableBytes(), maxDatagramPacketSize)
-                    : buf.writableBytes();
-
-            int initialWritableBytes = buf.writableBytes();
-            try (var iteration = buf.forEachComponent()) {
-                for (var c = iteration.firstWritable(); c != null; c = c.nextWritable()) {
-                    long address = c.writableNativeAddress();
-                    assert address != 0;
-                    int bytesRead = socket.recvAddress(address, 0, c.writableBytes());
-                    if (bytesRead <= 0) {
-                        break;
-                    }
-                    c.skipWritableBytes(bytesRead);
+    private boolean doReadBuffer(ReadSink readSink) {
+        for (;;) {
+            boolean connected = isConnected();
+            int datagramSize = getMaxDatagramPayloadSize();
+            Buffer buf = readSink.allocateBuffer();
+            if (buf == null) {
+                if (!readSink.consumeReadResult(0, 0, null)) {
+                    return true;
                 }
-            }
-            final int totalBytesRead = initialWritableBytes - buf.writableBytes();
-            if (totalBytesRead == 0) {
-                readSink.processRead(attemptedBytesRead, totalBytesRead, null);
-                // nothing was read, release the buffer.
-                return ReadState.All;
-            }
+            } else {
+                // Only try to use recvmmsg if its really supported by the running system.
+                int numDatagram = Native.IS_SUPPORTING_RECVMMSG ?
+                        datagramSize == 0 ? 1 : buf.writableBytes() / datagramSize :
+                        0;
+                try {
+                    if (numDatagram <= 1) {
+                        if (!connected || isUdpGro()) {
+                            NativeDatagramPacketArray array =  cleanDatagramPacketArray();
+                            RecyclableArrayList datagramPackets = null;
+                            try {
+                                int initialWriterOffset = buf.writerOffset();
 
-            readSink.processRead(attemptedBytesRead, totalBytesRead,
-                    new DatagramPacket(buf, localAddress(), remoteAddress()));
-            buf = null;
-            return ReadState.Partial;
-        } finally {
-            if (buf != null) {
-                buf.close();
+                                boolean added = array.addWritable(buf, 0, null);
+                                assert added;
+
+                                int attemptedBytesRead = buf.writerOffset() - initialWriterOffset;
+
+                                NativeDatagramPacketArray.NativeDatagramPacket msg = array.packets()[0];
+
+                                int bytesReceived = socket.recvmsg(msg);
+                                if (!msg.hasSender()) {
+                                    if (!readSink.consumeReadResult(attemptedBytesRead, 0, null)) {
+                                        return false;
+                                    }
+                                } else {
+                                    buf.writerOffset(initialWriterOffset + bytesReceived);
+                                    InetSocketAddress local = (InetSocketAddress) localAddress();
+                                    DatagramPacket packet = msg.newDatagramPacket(buf, local);
+                                    final boolean keepReading;
+                                    if (!(packet instanceof SegmentedDatagramPacket)) {
+                                        keepReading = readSink.consumeReadResult(
+                                                attemptedBytesRead, bytesReceived, packet);
+                                        buf = null;
+                                    } else {
+                                        // Its important we process all received data out of the
+                                        // NativeDatagramPacketArray before we call fireChannelRead(...). This is
+                                        // because the user may call flush() in a channelRead(...) method and so may
+                                        // re-use the NativeDatagramPacketArray again.
+                                        datagramPackets = RecyclableArrayList.newInstance();
+                                        addDatagramPacketToOut(packet, datagramPackets);
+                                        // null out buf as addDatagramPacketToOut did take ownership of the
+                                        // Buffer / packet and transferred it into the RecyclableArrayList.
+                                        buf = null;
+
+                                        keepReading = processPacketList(readSink, attemptedBytesRead, datagramPackets);
+                                        datagramPackets.recycle();
+                                        datagramPackets = null;
+                                    }
+                                    if (!keepReading) {
+                                        return true;
+                                    }
+                                }
+                            } finally {
+                                releaseAndRecycle(buf, datagramPackets);
+                            }
+                        } else {
+                            int attemptedBytesRead = datagramSize != 0 ? Math.min(buf.writableBytes(), datagramSize)
+                                    : buf.writableBytes();
+
+                            int initialWritableBytes = buf.writableBytes();
+                            try (var iteration = buf.forEachComponent()) {
+                                for (var c = iteration.firstWritable(); c != null; c = c.nextWritable()) {
+                                    long address = c.writableNativeAddress();
+                                    assert address != 0;
+                                    int bytesRead = socket.recvAddress(address, 0, c.writableBytes());
+                                    if (bytesRead <= 0) {
+                                        break;
+                                    }
+                                    c.skipWritableBytes(bytesRead);
+                                }
+                            }
+                            final int totalBytesRead = initialWritableBytes - buf.writableBytes();
+                            if (totalBytesRead == 0) {
+                                buf.close();
+                                buf = null;
+                                if (!readSink.consumeReadResult(attemptedBytesRead, totalBytesRead, null)) {
+                                    // nothing was read, release the buffer.
+                                    return false;
+                                }
+                            } else {
+                                boolean keepReading = readSink.consumeReadResult(attemptedBytesRead, totalBytesRead,
+                                        new DatagramPacket(buf, localAddress(), remoteAddress()));
+                                if (!keepReading) {
+                                    return true;
+                                }
+                            }
+                        }
+                    } else {
+                        // Try to use scattering reads via recvmmsg(...) syscall.
+                        NativeDatagramPacketArray array =  cleanDatagramPacketArray();
+                        RecyclableArrayList datagramPackets = null;
+                        try {
+                            int initialWriterOffset = buf.writerOffset();
+                            for (int i = 0; i < numDatagram; i++) {
+                                if (!array.addWritable(buf, datagramSize, null)) {
+                                    break;
+                                }
+                            }
+
+                            int attemptedBytesRead = buf.writerOffset() - initialWriterOffset;
+
+                            NativeDatagramPacketArray.NativeDatagramPacket[] packets = array.packets();
+
+                            int received = socket.recvmmsg(packets, 0, array.count());
+                            if (received == 0) {
+                                if (!readSink.consumeReadResult(attemptedBytesRead, 0, null)) {
+                                    return false;
+                                }
+                            } else {
+                                int bytesReceived = received * datagramSize;
+                                buf.writerOffset(initialWriterOffset + bytesReceived);
+                                InetSocketAddress local = (InetSocketAddress) localAddress();
+                                if (received == 1) {
+                                    // Single packet fast-path
+                                    DatagramPacket packet = packets[0].newDatagramPacket(buf, local);
+                                    if (!(packet instanceof SegmentedDatagramPacket)) {
+                                        boolean keepReading = readSink.consumeReadResult(
+                                                attemptedBytesRead, datagramSize, packet);
+                                        buf = null;
+                                        if (!keepReading) {
+                                            return true;
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                }
+
+                                // It's important we process all received data out of the NativeDatagramPacketArray
+                                // before we call fireChannelRead(...). This is because the user may call flush()
+                                // in a channelRead(...) method and so may re-use the NativeDatagramPacketArray again.
+                                datagramPackets = RecyclableArrayList.newInstance();
+                                for (int i = 0; i < received; i++) {
+                                    DatagramPacket packet = packets[i].newDatagramPacket(
+                                            buf.readSplit(datagramSize), local);
+                                    addDatagramPacketToOut(packet, datagramPackets);
+                                }
+                                // Since we used readSplit(...) before, we should now release the buffer and null it
+                                // out.
+                                buf.close();
+                                buf = null;
+
+                                boolean keepReading = processPacketList(readSink, attemptedBytesRead, datagramPackets);
+                                datagramPackets.recycle();
+                                datagramPackets = null;
+                                if (!keepReading) {
+                                    return true;
+                                }
+                            }
+                        } finally {
+                            releaseAndRecycle(buf, datagramPackets);
+                        }
+                    }
+                } catch (NativeIoException e) {
+                    Exception exception;
+                    if (connected) {
+                        exception = translateForConnected(e);
+                    } else {
+                        exception = e;
+                    }
+                    if (!readSink.consumeReadResult(0, 0, exception)) {
+                        return false;
+                    }
+                } catch (Exception e) {
+                    if (!readSink.consumeReadResult(0, 0, e)) {
+                        return false;
+                    }
+                } finally {
+                    if (buf != null) {
+                        buf.close();
+                    }
+                }
             }
         }
     }
@@ -655,9 +792,10 @@ public final class EpollDatagramChannel extends AbstractEpollChannel<UnixChannel
         }
     }
 
-    private static void processPacketList(ReadSink readSink, int attemptedBytesRead,
+    private static boolean processPacketList(ReadSink readSink, int attemptedBytesRead,
                                           RecyclableArrayList packetList) {
         int messagesRead = packetList.size();
+        boolean continueReading = true;
         for (int i = 0; i < messagesRead; i++) {
             DatagramPacket packet =  (DatagramPacket) packetList.set(i, NULL);
             int readable = packet.content().readableBytes();
@@ -668,105 +806,11 @@ public final class EpollDatagramChannel extends AbstractEpollChannel<UnixChannel
             } else {
                 attempted = attemptedBytesRead;
             }
-            readSink.processRead(attempted, readable, packet);
+            if (!readSink.consumeReadResult(attempted, readable, packet)) {
+                continueReading = false;
+            }
         }
-    }
-
-    private ReadState recvmsg(ReadSink readSink, NativeDatagramPacketArray array, Buffer buf) throws IOException {
-        RecyclableArrayList datagramPackets = null;
-        try {
-            int initialWriterOffset = buf.writerOffset();
-
-            boolean added = array.addWritable(buf, 0, null);
-            assert added;
-
-            int attemptedBytesRead = buf.writerOffset() - initialWriterOffset;
-
-            NativeDatagramPacketArray.NativeDatagramPacket msg = array.packets()[0];
-
-            int bytesReceived = socket.recvmsg(msg);
-            if (!msg.hasSender()) {
-                readSink.processRead(attemptedBytesRead, 0, null);
-                return ReadState.All;
-            }
-            buf.writerOffset(initialWriterOffset + bytesReceived);
-            InetSocketAddress local = (InetSocketAddress) localAddress();
-            DatagramPacket packet = msg.newDatagramPacket(buf, local);
-            if (!(packet instanceof SegmentedDatagramPacket)) {
-                readSink.processRead(attemptedBytesRead, bytesReceived, packet);
-                buf = null;
-            } else {
-                // Its important we process all received data out of the NativeDatagramPacketArray
-                // before we call fireChannelRead(...). This is because the user may call flush()
-                // in a channelRead(...) method and so may re-use the NativeDatagramPacketArray again.
-                datagramPackets = RecyclableArrayList.newInstance();
-                addDatagramPacketToOut(packet, datagramPackets);
-                // null out buf as addDatagramPacketToOut did take ownership of the Buffer / packet and transferred
-                // it into the RecyclableArrayList.
-                buf = null;
-
-                processPacketList(readSink, attemptedBytesRead, datagramPackets);
-                datagramPackets.recycle();
-                datagramPackets = null;
-            }
-            return ReadState.Partial;
-        } finally {
-            releaseAndRecycle(buf, datagramPackets);
-        }
-    }
-
-    private ReadState scatteringRead(ReadSink readSink, NativeDatagramPacketArray array,
-                                        Buffer buf, int datagramSize, int numDatagram)
-            throws IOException {
-        RecyclableArrayList datagramPackets = null;
-        try {
-            int initialWriterOffset = buf.writerOffset();
-            for (int i = 0; i < numDatagram; i++) {
-                if (!array.addWritable(buf, datagramSize, null)) {
-                    break;
-                }
-            }
-
-            int attemptedBytesRead = buf.writerOffset() - initialWriterOffset;
-
-            NativeDatagramPacketArray.NativeDatagramPacket[] packets = array.packets();
-
-            int received = socket.recvmmsg(packets, 0, array.count());
-            if (received == 0) {
-                readSink.processRead(attemptedBytesRead, 0, null);
-                return ReadState.All;
-            }
-            int bytesReceived = received * datagramSize;
-            buf.writerOffset(initialWriterOffset + bytesReceived);
-            InetSocketAddress local = (InetSocketAddress) localAddress();
-            if (received == 1) {
-                // Single packet fast-path
-                DatagramPacket packet = packets[0].newDatagramPacket(buf, local);
-                if (!(packet instanceof SegmentedDatagramPacket)) {
-                    readSink.processRead(attemptedBytesRead, datagramSize, packet);
-                    buf = null;
-                    return ReadState.Partial;
-                }
-            }
-            // It's important we process all received data out of the NativeDatagramPacketArray
-            // before we call fireChannelRead(...). This is because the user may call flush()
-            // in a channelRead(...) method and so may re-use the NativeDatagramPacketArray again.
-            datagramPackets = RecyclableArrayList.newInstance();
-            for (int i = 0; i < received; i++) {
-                DatagramPacket packet = packets[i].newDatagramPacket(buf.readSplit(datagramSize), local);
-                addDatagramPacketToOut(packet, datagramPackets);
-            }
-            // Since we used readSplit(...) before, we should now release the buffer and null it out.
-            buf.close();
-            buf = null;
-
-            processPacketList(readSink, attemptedBytesRead, datagramPackets);
-            datagramPackets.recycle();
-            datagramPackets = null;
-            return ReadState.Partial;
-        } finally {
-            releaseAndRecycle(buf, datagramPackets);
-        }
+        return continueReading;
     }
 
     private NativeDatagramPacketArray cleanDatagramPacketArray() {

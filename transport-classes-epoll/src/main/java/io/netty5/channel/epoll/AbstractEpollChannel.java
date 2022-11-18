@@ -297,15 +297,13 @@ abstract class AbstractEpollChannel<P extends UnixChannel>
     }
 
     @Override
-    protected boolean doReadNow(ReadSink readSink)
-            throws Exception {
+    protected void doReadNow(ReadSink readSink) {
         maybeMoreDataToRead = false;
-        ReadState readState = null;
+        boolean partial = false;
         try {
-            readState = epollInReady(readSink);
-            return readState == ReadState.Closed;
+            partial = epollInReady(readSink);
         } finally {
-            this.maybeMoreDataToRead = readState == ReadState.Partial || receivedRdHup;
+            this.maybeMoreDataToRead = partial || receivedRdHup;
         }
     }
 
@@ -325,16 +323,10 @@ abstract class AbstractEpollChannel<P extends UnixChannel>
         }
     }
 
-    enum ReadState {
-        All,
-        Partial,
-        Closed
-    }
-
     /**
      * Called once EPOLLIN event is ready to be processed
      */
-    protected abstract ReadState epollInReady(ReadSink readSink) throws Exception;
+    protected abstract boolean epollInReady(ReadSink readSink);
 
     private void executeReadNowRunnable() {
         if (readNowRunnablePending || !isActive()) {
