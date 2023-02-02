@@ -50,7 +50,8 @@ public class WebSocketServerExtensionHandler extends ChannelDuplexHandler {
 
     private final List<WebSocketServerExtensionHandshaker> extensionHandshakers;
 
-    private final Queue<List<WebSocketServerExtension>> validExtensions = new ArrayDeque<>(4);
+    private final Queue<List<WebSocketServerExtension>> validExtensions =
+            new ArrayDeque<List<WebSocketServerExtension>>(4);
 
     /**
      * Constructor
