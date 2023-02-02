@@ -103,7 +103,6 @@ public class WebSocketServerExtensionHandler extends ChannelDuplexHandler {
                 validExtensionsList = Collections.emptyList();
             }
             validExtensions.offer(validExtensionsList);
-
         }
 
         super.channelRead(ctx, msg);
