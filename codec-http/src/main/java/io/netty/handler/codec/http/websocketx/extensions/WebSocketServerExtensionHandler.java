@@ -126,7 +126,7 @@ public class WebSocketServerExtensionHandler extends ChannelDuplexHandler {
 
     private void handlePotentialUpgrade(final ChannelHandlerContext ctx,
                                         ChannelPromise promise, HttpResponse httpResponse,
-                                        List<WebSocketServerExtension> validExtensionsList) {
+                                        final List<WebSocketServerExtension> validExtensionsList) {
         HttpHeaders headers = httpResponse.headers();
 
         if (WebSocketExtensionUtil.isWebsocketUpgrade(headers)) {
