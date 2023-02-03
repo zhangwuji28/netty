@@ -24,6 +24,7 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.resolver.HostsFileEntriesResolver;
 import io.netty.resolver.ResolvedAddressTypes;
 import io.netty.util.concurrent.Future;
+import io.netty.util.internal.ObjectUtil;
 
 import java.net.SocketAddress;
 import java.util.ArrayList;
@@ -63,6 +64,8 @@ public final class DnsNameResolverBuilder {
     private String[] searchDomains;
     private int ndots = -1;
     private boolean decodeIdn = true;
+
+    private int maxNumConsolidation = -1;
 
     /**
      * Creates a new builder.
@@ -464,6 +467,20 @@ public final class DnsNameResolverBuilder {
     }
 
     /**
+     * Set the maximum numbers of lookups that we try to consolidate when in-flights. This means if multiple
+     * lookups are done for the same hostname and still in-flight only one actual query will be made.
+     *
+     * @param maxNumConsolidation the maximum lookups to consolidate, or {@code -1} if no consolidation should be
+     *                            performed.
+     * @return {@code this}
+     */
+    public DnsNameResolverBuilder consolidateLookups(int maxNumConsolidation) {
+        this.maxNumConsolidation = ObjectUtil.checkInRange(
+                -1, Integer.MAX_VALUE, maxNumConsolidation, "maxNumConsolidation");
+        return this;
+    }
+
+    /**
      * Returns a new {@link DnsNameResolver} instance.
      *
      * @return a {@link DnsNameResolver}
@@ -506,7 +523,8 @@ public final class DnsNameResolverBuilder {
                 searchDomains,
                 ndots,
                 decodeIdn,
-                completeOncePreferredResolved);
+                completeOncePreferredResolved,
+                maxNumConsolidation);
     }
 
     /**
@@ -573,6 +591,7 @@ public final class DnsNameResolverBuilder {
         copiedBuilder.decodeIdn(decodeIdn);
         copiedBuilder.completeOncePreferredResolved(completeOncePreferredResolved);
         copiedBuilder.localAddress(localAddress);
+        copiedBuilder.consolidateLookups(maxNumConsolidation);
         return copiedBuilder;
     }
 }
